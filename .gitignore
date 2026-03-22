@@ -1,1 +1,3 @@
-node_modules\n.env\nbuild
+node_modules
+.env
+build
