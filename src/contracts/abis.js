@@ -1,6 +1,6 @@
-export const FLOWARC_ADDRESS     = "0xC23047BdDCaeffAC332B32c95090341afE986954";
+export const FLOWARC_ADDRESS = "0x9F3bbf462dee5A0242786fd47037F96ABa82Ad5a";
 export const PAYSLIP_NFT_ADDRESS = "0x5468B8a06Bf904E7D27f75c329206B31d00d83B9";
-export const USDC_ADDRESS        = "0x3600000000000000000000000000000000000000";
+export const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 
 export const FLOWARC_ABI = [
   "function registerEmployer(string calldata companyName) external",
@@ -18,18 +18,18 @@ export const FLOWARC_ABI = [
   "event WorkerRemoved(address indexed employer, address indexed worker)",
   "event FundsDeposited(address indexed employer, uint256 amount)",
   "event FundsWithdrawn(address indexed employer, uint256 amount)",
-  "event SalaryClaimed(address indexed employer, address indexed worker, uint256 amount, uint256 payslipTokenId)"
+  "event SalaryClaimed(address indexed employer, address indexed worker, uint256 amount, uint256 payslipTokenId)",
 ];
 
 export const PAYSLIP_ABI = [
   "function getWorkerPayslips(address worker) external view returns (uint256[])",
   "function getPayslip(uint256 tokenId) external view returns (address employer, address worker, uint256 amount, uint256 timestamp, string memory companyName)",
   "function balanceOf(address worker) external view returns (uint256)",
-  "function totalSupply() external view returns (uint256)"
+  "function totalSupply() external view returns (uint256)",
 ];
 
 export const USDC_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function allowance(address owner, address spender) external view returns (uint256)",
-  "function balanceOf(address account) external view returns (uint256)"
+  "function balanceOf(address account) external view returns (uint256)",
 ];
