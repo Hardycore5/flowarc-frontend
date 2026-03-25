@@ -42,8 +42,12 @@ function EmployerDashboard({
       if (emp.registered) {
         setBalance(ethers.utils.formatUnits(emp.balance, 6));
         const addrs = await flowArc.getEmployerWorkers(address);
+        // Deduplicate addresses — keep only the last occurrence of each address
+        const uniqueAddrs = [
+          ...new Map(addrs.map((a) => [a.toLowerCase(), a])).values(),
+        ];
         const data = await Promise.all(
-          addrs.map(async (a) => {
+          uniqueAddrs.map(async (a) => {
             const d = await flowArc.getWorkerDetails(address, a);
             return {
               address: a,
