@@ -15,7 +15,15 @@ function EmployerDashboard({
   const [depositAmt, setDepositAmt] = useState("");
   const [withdrawAmt, setWithdrawAmt] = useState("");
   const [workers, setWorkers] = useState([]);
-  const [deletedWorkers, setDeletedWorkers] = useState([]); // locally deleted worker addresses
+  const [deletedWorkers, setDeletedWorkers] = useState(() => {
+    try {
+      const key = `flowarc_deleted_workers_${address}`;
+      const stored = localStorage.getItem(key);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [workerAddr, setWorkerAddr] = useState("");
   const [workerName, setWorkerName] = useState("");
   const [workerSalary, setWorkerSalary] = useState("");
@@ -190,10 +198,13 @@ function EmployerDashboard({
     setLoading(false);
   };
 
-  // Permanently delete from dashboard (local only)
+  // Permanently delete from dashboard (persisted in localStorage)
   const deleteWorker = () => {
     if (!confirmDelete) return;
-    setDeletedWorkers((prev) => [...prev, confirmDelete.address]);
+    const key = `flowarc_deleted_workers_${address}`;
+    const updated = [...deletedWorkers, confirmDelete.address];
+    setDeletedWorkers(updated);
+    localStorage.setItem(key, JSON.stringify(updated));
     notify(`${confirmDelete.name} deleted from dashboard!`);
     setConfirmDelete(null);
   };
