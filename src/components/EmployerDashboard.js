@@ -35,6 +35,12 @@ function EmployerDashboard({
   const [reactivating, setReactivating] = useState(null);
   const [errors, setErrors] = useState({});
 
+  // Top up state
+  const [topUpWorker, setTopUpWorker] = useState(null);
+  const [topUpAmt, setTopUpAmt] = useState("");
+  const [topUpNote, setTopUpNote] = useState("");
+  const [topUpError, setTopUpError] = useState("");
+
   const loadData = useCallback(async () => {
     if (!flowArc || !address) return;
     try {
@@ -42,7 +48,6 @@ function EmployerDashboard({
       if (emp.registered) {
         setBalance(ethers.utils.formatUnits(emp.balance, 6));
         const addrs = await flowArc.getEmployerWorkers(address);
-        // Deduplicate addresses — keep only the last occurrence of each address
         const uniqueAddrs = [
           ...new Map(addrs.map((a) => [a.toLowerCase(), a])).values(),
         ];
@@ -202,7 +207,6 @@ function EmployerDashboard({
     setLoading(false);
   };
 
-  // Permanently delete from dashboard (persisted in localStorage)
   const deleteWorker = () => {
     if (!confirmDelete) return;
     const key = `flowarc_deleted_workers_${address}`;
@@ -213,7 +217,6 @@ function EmployerDashboard({
     setConfirmDelete(null);
   };
 
-  // Reactivate an inactive worker by calling addWorker again
   const reactivateWorker = async (worker) => {
     setReactivating(worker.address);
     setLoading(true);
@@ -237,7 +240,42 @@ function EmployerDashboard({
     setReactivating(null);
   };
 
-  // Filter out locally deleted workers
+  // Top up — sends USDC directly from employer wallet to worker as bonus/remuneration
+  const topUpSalary = async () => {
+    if (!topUpAmt || parseFloat(topUpAmt) <= 0) {
+      setTopUpError("Enter a valid amount");
+      return;
+    }
+    setTopUpError("");
+    setLoading(true);
+    try {
+      const amount = ethers.utils.parseUnits(topUpAmt, 6);
+      const walletBal = await usdc.balanceOf(address);
+      if (walletBal.lt(amount)) {
+        setTopUpError("Insufficient wallet balance");
+        setLoading(false);
+        return;
+      }
+      const tx = await usdc.transfer(topUpWorker.address, amount);
+      await tx.wait();
+      notify(`💸 ${topUpAmt} USDC sent to ${topUpWorker.name}!`);
+      setTopUpWorker(null);
+      setTopUpAmt("");
+      setTopUpNote("");
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
+    setLoading(false);
+  };
+
+  const closeTopUp = () => {
+    setTopUpWorker(null);
+    setTopUpAmt("");
+    setTopUpNote("");
+    setTopUpError("");
+  };
+
   const visibleWorkers = workers.filter(
     (w) => !deletedWorkers.includes(w.address),
   );
@@ -298,6 +336,7 @@ function EmployerDashboard({
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 500; display: flex; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(8px); animation: fadeIn 0.2s ease; }
         @keyframes fadeIn { from{opacity:0} to{opacity:1} }
         .confirm-box { background: var(--dark2); border: 1px solid rgba(248,113,113,0.3); border-radius: 20px; padding: 36px; max-width: 400px; width: 100%; text-align: center; animation: slideUp 0.2s ease; }
+        .topup-box { background: var(--dark2); border: 1px solid rgba(240,192,96,0.3); border-radius: 20px; padding: 36px; max-width: 420px; width: 100%; animation: slideUp 0.2s ease; }
         @keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
         .confirm-icon { font-size: 40px; margin-bottom: 16px; }
         .confirm-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; margin-bottom: 8px; }
@@ -309,12 +348,28 @@ function EmployerDashboard({
         .confirm-danger:hover { background: rgba(248,113,113,0.25); }
         .copy-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 13px; padding: 2px 6px; border-radius: 4px; transition: color 0.2s; }
         .copy-btn:hover { color: var(--gold); }
-        .btn-reactivate { background: rgba(74,222,128,0.1); color: var(--success); border: 1px solid rgba(74,222,128,0.3); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; margin-right: 8px; }
+        .btn-reactivate { background: rgba(74,222,128,0.1); color: var(--success); border: 1px solid rgba(74,222,128,0.3); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
         .btn-reactivate:hover { background: rgba(74,222,128,0.2); }
         .btn-reactivate:disabled { opacity: 0.45; cursor: not-allowed; }
         .btn-delete { background: rgba(100,100,120,0.12); color: var(--muted); border: 1px solid rgba(100,100,120,0.25); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
         .btn-delete:hover { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.3); }
+        .btn-topup { background: rgba(240,192,96,0.1); color: var(--gold); border: 1px solid rgba(240,192,96,0.3); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
+        .btn-topup:hover { background: rgba(240,192,96,0.2); border-color: rgba(240,192,96,0.5); }
+        .btn-topup:disabled { opacity: 0.45; cursor: not-allowed; }
         .worker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+        .topup-worker-info { display: flex; align-items: center; gap: 14px; background: var(--dark); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; margin-bottom: 16px; }
+        .topup-avatar { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, rgba(240,192,96,0.2), rgba(240,192,96,0.05)); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+        .topup-name { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; }
+        .topup-addr { font-size: 11px; color: var(--muted); font-family: monospace; margin-top: 3px; }
+        .topup-inp-wrap { position: relative; margin-bottom: 12px; }
+        .topup-inp-wrap .inp { padding-right: 64px; margin-bottom: 0; }
+        .topup-currency { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--gold); font-weight: 700; pointer-events: none; }
+        .topup-err { font-size: 12px; color: var(--danger); margin-top: 6px; margin-bottom: 10px; font-weight: 600; }
+        .btn-send { width: 100%; background: linear-gradient(135deg, #F0C060, #B06010); color: #080808; border: none; border-radius: 12px; padding: 14px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; margin-top: 6px; }
+        .btn-send:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(240,192,96,0.35); }
+        .btn-send:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+        .topup-bal { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+        .topup-bal span { color: var(--gold); font-weight: 700; }
       `}</style>
 
       {/* CONFIRM REMOVE MODAL */}
@@ -368,6 +423,115 @@ function EmployerDashboard({
                 Yes, Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOP UP MODAL */}
+      {topUpWorker && (
+        <div className="confirm-overlay" onClick={closeTopUp}>
+          <div className="topup-box" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: "20px",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontFamily: "'Syne', sans-serif",
+                    fontSize: "20px",
+                    fontWeight: 800,
+                  }}
+                >
+                  💸 Top Up Salary
+                </div>
+                <div
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--muted)",
+                    marginTop: "4px",
+                  }}
+                >
+                  Send a one-time bonus or remuneration
+                </div>
+              </div>
+              <button
+                onClick={closeTopUp}
+                style={{
+                  background: "var(--dark3)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  width: "32px",
+                  height: "32px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                  fontSize: "14px",
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Worker Info */}
+            <div className="topup-worker-info">
+              <div className="topup-avatar">👷</div>
+              <div>
+                <div className="topup-name">{topUpWorker.name}</div>
+                <div className="topup-addr">
+                  {topUpWorker.address.slice(0, 14)}...
+                  {topUpWorker.address.slice(-6)}
+                </div>
+              </div>
+            </div>
+
+            {/* Wallet Balance */}
+            <div className="topup-bal">
+              Your wallet balance:{" "}
+              <span>{parseFloat(usdcBalance).toFixed(2)} USDC</span>
+            </div>
+
+            {/* Amount */}
+            <div className="topup-inp-wrap">
+              <input
+                className="inp"
+                placeholder="Amount to send"
+                type="number"
+                value={topUpAmt}
+                onChange={(e) => {
+                  setTopUpAmt(e.target.value);
+                  setTopUpError("");
+                }}
+              />
+              <span className="topup-currency">USDC</span>
+            </div>
+            {topUpError && <div className="topup-err">⚠ {topUpError}</div>}
+
+            {/* Optional Note */}
+            <input
+              className="inp"
+              placeholder="Note (optional) — e.g. Q3 Bonus, Performance Award"
+              value={topUpNote}
+              onChange={(e) => setTopUpNote(e.target.value)}
+            />
+
+            <button
+              className="btn-send"
+              onClick={topUpSalary}
+              disabled={loading}
+            >
+              {loading
+                ? "Sending..."
+                : `Send ${topUpAmt ? parseFloat(topUpAmt).toFixed(2) : "0.00"} USDC →`}
+            </button>
           </div>
         </div>
       )}
@@ -578,13 +742,27 @@ function EmployerDashboard({
                 </div>
                 <div className="worker-actions">
                   {w.active ? (
-                    <button
-                      className="btn-remove"
-                      onClick={() => setConfirmRemove(w)}
-                      disabled={loading}
-                    >
-                      Remove
-                    </button>
+                    <>
+                      <button
+                        className="btn-topup"
+                        onClick={() => {
+                          setTopUpWorker(w);
+                          setTopUpAmt("");
+                          setTopUpNote("");
+                          setTopUpError("");
+                        }}
+                        disabled={loading}
+                      >
+                        💸 Top Up
+                      </button>
+                      <button
+                        className="btn-remove"
+                        onClick={() => setConfirmRemove(w)}
+                        disabled={loading}
+                      >
+                        Remove
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button
