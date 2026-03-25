@@ -2,20 +2,30 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { FLOWARC_ADDRESS } from "../contracts/abis";
 
-function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, notify }) {
-  const [companyName, setCompanyName]     = useState("");
-  const [balance, setBalance]             = useState("0");
-  const [depositAmt, setDepositAmt]       = useState("");
-  const [withdrawAmt, setWithdrawAmt]     = useState("");
-  const [workers, setWorkers]             = useState([]);
-  const [workerAddr, setWorkerAddr]       = useState("");
-  const [workerName, setWorkerName]       = useState("");
-  const [workerSalary, setWorkerSalary]   = useState("");
-  const [loading, setLoading]             = useState(false);
-  const [usdcBalance, setUsdcBalance]     = useState("0");
-  const [skeletonLoad, setSkeletonLoad]   = useState(true);
+function EmployerDashboard({
+  flowArc,
+  usdc,
+  address,
+  isEmployer,
+  setIsEmployer,
+  notify,
+}) {
+  const [companyName, setCompanyName] = useState("");
+  const [balance, setBalance] = useState("0");
+  const [depositAmt, setDepositAmt] = useState("");
+  const [withdrawAmt, setWithdrawAmt] = useState("");
+  const [workers, setWorkers] = useState([]);
+  const [deletedWorkers, setDeletedWorkers] = useState([]); // locally deleted worker addresses
+  const [workerAddr, setWorkerAddr] = useState("");
+  const [workerName, setWorkerName] = useState("");
+  const [workerSalary, setWorkerSalary] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [usdcBalance, setUsdcBalance] = useState("0");
+  const [skeletonLoad, setSkeletonLoad] = useState(true);
   const [confirmRemove, setConfirmRemove] = useState(null);
-  const [errors, setErrors]               = useState({});
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [reactivating, setReactivating] = useState(null);
+  const [errors, setErrors] = useState({});
 
   const loadData = useCallback(async () => {
     if (!flowArc || !address) return;
@@ -24,34 +34,66 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
       if (emp.registered) {
         setBalance(ethers.utils.formatUnits(emp.balance, 6));
         const addrs = await flowArc.getEmployerWorkers(address);
-        const data  = await Promise.all(addrs.map(async (a) => {
-          const d = await flowArc.getWorkerDetails(address, a);
-          return {
-            address: a, name: d.name, active: d.active,
-            earned: ethers.utils.formatUnits(d.earned, 6),
-            monthlySalary: ethers.utils.formatUnits(d.salaryPerSecond.mul(30 * 24 * 3600), 6)
-          };
-        }));
+        const data = await Promise.all(
+          addrs.map(async (a) => {
+            const d = await flowArc.getWorkerDetails(address, a);
+            return {
+              address: a,
+              name: d.name,
+              active: d.active,
+              earned: ethers.utils.formatUnits(d.earned, 6),
+              monthlySalary: ethers.utils.formatUnits(
+                d.salaryPerSecond.mul(30 * 24 * 3600),
+                6,
+              ),
+              salaryPerSecond: d.salaryPerSecond,
+            };
+          }),
+        );
         setWorkers(data);
       }
       if (usdc) {
         const b = await usdc.balanceOf(address);
         setUsdcBalance(ethers.utils.formatUnits(b, 6));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
     setSkeletonLoad(false);
   }, [flowArc, usdc, address]);
 
-  useEffect(() => { loadData(); const i = setInterval(loadData, 15000); return () => clearInterval(i); }, [loadData]);
+  useEffect(() => {
+    loadData();
+    const i = setInterval(loadData, 15000);
+    return () => clearInterval(i);
+  }, [loadData]);
 
   const validate = (fields) => {
     const errs = {};
-    if (fields.companyName !== undefined && !fields.companyName) errs.companyName = "Company name is required";
-    if (fields.depositAmt !== undefined && (!fields.depositAmt || parseFloat(fields.depositAmt) <= 0)) errs.depositAmt = "Enter a valid amount";
-    if (fields.withdrawAmt !== undefined && (!fields.withdrawAmt || parseFloat(fields.withdrawAmt) <= 0)) errs.withdrawAmt = "Enter a valid amount";
-    if (fields.workerAddr !== undefined && !ethers.utils.isAddress(fields.workerAddr)) errs.workerAddr = "Invalid wallet address";
-    if (fields.workerName !== undefined && !fields.workerName) errs.workerName = "Worker name is required";
-    if (fields.workerSalary !== undefined && (!fields.workerSalary || parseFloat(fields.workerSalary) <= 0)) errs.workerSalary = "Enter a valid salary";
+    if (fields.companyName !== undefined && !fields.companyName)
+      errs.companyName = "Company name is required";
+    if (
+      fields.depositAmt !== undefined &&
+      (!fields.depositAmt || parseFloat(fields.depositAmt) <= 0)
+    )
+      errs.depositAmt = "Enter a valid amount";
+    if (
+      fields.withdrawAmt !== undefined &&
+      (!fields.withdrawAmt || parseFloat(fields.withdrawAmt) <= 0)
+    )
+      errs.withdrawAmt = "Enter a valid amount";
+    if (
+      fields.workerAddr !== undefined &&
+      !ethers.utils.isAddress(fields.workerAddr)
+    )
+      errs.workerAddr = "Invalid wallet address";
+    if (fields.workerName !== undefined && !fields.workerName)
+      errs.workerName = "Worker name is required";
+    if (
+      fields.workerSalary !== undefined &&
+      (!fields.workerSalary || parseFloat(fields.workerSalary) <= 0)
+    )
+      errs.workerSalary = "Enter a valid salary";
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -61,9 +103,13 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
     setLoading(true);
     try {
       const tx = await flowArc.registerEmployer(companyName);
-      await tx.wait(); setIsEmployer(true);
-      notify(`"${companyName}" registered!`); loadData();
-    } catch (e) { notify(e.message, "error"); }
+      await tx.wait();
+      setIsEmployer(true);
+      notify(`"${companyName}" registered!`);
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
     setLoading(false);
   };
 
@@ -73,10 +119,21 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
     try {
       const amount = ethers.utils.parseUnits(depositAmt, 6);
       const allowance = await usdc.allowance(address, FLOWARC_ADDRESS);
-      if (allowance.lt(amount)) { const t = await usdc.approve(FLOWARC_ADDRESS, ethers.constants.MaxUint256); await t.wait(); }
-      const tx = await flowArc.depositFunds(amount); await tx.wait();
-      notify(`Deposited ${depositAmt} USDC!`); setDepositAmt(""); loadData();
-    } catch (e) { notify(e.message, "error"); }
+      if (allowance.lt(amount)) {
+        const t = await usdc.approve(
+          FLOWARC_ADDRESS,
+          ethers.constants.MaxUint256,
+        );
+        await t.wait();
+      }
+      const tx = await flowArc.depositFunds(amount);
+      await tx.wait();
+      notify(`Deposited ${depositAmt} USDC!`);
+      setDepositAmt("");
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
     setLoading(false);
   };
 
@@ -84,9 +141,16 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
     if (!validate({ withdrawAmt })) return;
     setLoading(true);
     try {
-      const tx = await flowArc.withdrawFunds(ethers.utils.parseUnits(withdrawAmt, 6)); await tx.wait();
-      notify(`Withdrawn ${withdrawAmt} USDC!`); setWithdrawAmt(""); loadData();
-    } catch (e) { notify(e.message, "error"); }
+      const tx = await flowArc.withdrawFunds(
+        ethers.utils.parseUnits(withdrawAmt, 6),
+      );
+      await tx.wait();
+      notify(`Withdrawn ${withdrawAmt} USDC!`);
+      setWithdrawAmt("");
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
     setLoading(false);
   };
 
@@ -94,10 +158,20 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
     if (!validate({ workerAddr, workerName, workerSalary })) return;
     setLoading(true);
     try {
-      const tx = await flowArc.addWorker(workerAddr, workerName, ethers.utils.parseUnits(workerSalary, 6)); await tx.wait();
+      const tx = await flowArc.addWorker(
+        workerAddr,
+        workerName,
+        ethers.utils.parseUnits(workerSalary, 6),
+      );
+      await tx.wait();
       notify(`"${workerName}" added!`);
-      setWorkerAddr(""); setWorkerName(""); setWorkerSalary(""); loadData();
-    } catch (e) { notify(e.message, "error"); }
+      setWorkerAddr("");
+      setWorkerName("");
+      setWorkerSalary("");
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
     setLoading(false);
   };
 
@@ -105,30 +179,100 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
     if (!confirmRemove) return;
     setLoading(true);
     try {
-      const tx = await flowArc.removeWorker(confirmRemove.address); await tx.wait();
-      notify(`${confirmRemove.name} removed!`); setConfirmRemove(null); loadData();
-    } catch (e) { notify(e.message, "error"); }
+      const tx = await flowArc.removeWorker(confirmRemove.address);
+      await tx.wait();
+      notify(`${confirmRemove.name} removed!`);
+      setConfirmRemove(null);
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
     setLoading(false);
   };
 
-  const Skeleton = ({ w, h }) => (
-    <div style={{width: w, height: h, borderRadius:"8px", background:"linear-gradient(90deg, #131325 25%, #1a1a35 50%, #131325 75%)", backgroundSize:"200% 100%", animation:"shimmer 1.5s infinite"}} />
+  // Permanently delete from dashboard (local only)
+  const deleteWorker = () => {
+    if (!confirmDelete) return;
+    setDeletedWorkers((prev) => [...prev, confirmDelete.address]);
+    notify(`${confirmDelete.name} deleted from dashboard!`);
+    setConfirmDelete(null);
+  };
+
+  // Reactivate an inactive worker by calling addWorker again
+  const reactivateWorker = async (worker) => {
+    setReactivating(worker.address);
+    setLoading(true);
+    try {
+      const monthlySalary = ethers.utils.parseUnits(
+        parseFloat(worker.monthlySalary).toFixed(6),
+        6,
+      );
+      const tx = await flowArc.addWorker(
+        worker.address,
+        worker.name,
+        monthlySalary,
+      );
+      await tx.wait();
+      notify(`${worker.name} reactivated!`);
+      loadData();
+    } catch (e) {
+      notify(e.message, "error");
+    }
+    setLoading(false);
+    setReactivating(null);
+  };
+
+  // Filter out locally deleted workers
+  const visibleWorkers = workers.filter(
+    (w) => !deletedWorkers.includes(w.address),
   );
 
-  if (!isEmployer) return (
-    <div style={{maxWidth:"460px", margin:"70px auto"}}>
-      <div className="register-card">
-        <div className="reg-icon">🏢</div>
-        <div className="reg-title">Register Your Company</div>
-        <div className="reg-sub">Set up your payroll vault to start streaming USDC salaries to your workers onchain.</div>
-        <input className={`inp ${errors.companyName ? "inp-error" : ""}`} placeholder="Company Name" value={companyName} onChange={e => { setCompanyName(e.target.value); setErrors({}); }} />
-        {errors.companyName && <div className="err-msg">⚠ {errors.companyName}</div>}
-        <button className="btn-gold" onClick={registerEmployer} disabled={loading}>
-          {loading ? "Registering..." : "Register Company →"}
-        </button>
-      </div>
-    </div>
+  const Skeleton = ({ w, h }) => (
+    <div
+      style={{
+        width: w,
+        height: h,
+        borderRadius: "8px",
+        background:
+          "linear-gradient(90deg, #131325 25%, #1a1a35 50%, #131325 75%)",
+        backgroundSize: "200% 100%",
+        animation: "shimmer 1.5s infinite",
+      }}
+    />
   );
+
+  if (!isEmployer)
+    return (
+      <div style={{ maxWidth: "460px", margin: "70px auto" }}>
+        <div className="register-card">
+          <div className="reg-icon">🏢</div>
+          <div className="reg-title">Register Your Company</div>
+          <div className="reg-sub">
+            Set up your payroll vault to start streaming USDC salaries to your
+            workers onchain.
+          </div>
+          <input
+            className={`inp ${errors.companyName ? "inp-error" : ""}`}
+            placeholder="Company Name"
+            value={companyName}
+            onChange={(e) => {
+              setCompanyName(e.target.value);
+              setErrors({});
+            }}
+          />
+          {errors.companyName && (
+            <div className="err-msg">⚠ {errors.companyName}</div>
+          )}
+          <button
+            className="btn-gold"
+            onClick={registerEmployer}
+            disabled={loading}
+          >
+            {loading ? "Registering..." : "Register Company →"}
+          </button>
+        </div>
+      </div>
+    );
 
   return (
     <div>
@@ -150,21 +294,63 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
         .confirm-danger:hover { background: rgba(248,113,113,0.25); }
         .copy-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 13px; padding: 2px 6px; border-radius: 4px; transition: color 0.2s; }
         .copy-btn:hover { color: var(--gold); }
+        .btn-reactivate { background: rgba(74,222,128,0.1); color: var(--success); border: 1px solid rgba(74,222,128,0.3); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; margin-right: 8px; }
+        .btn-reactivate:hover { background: rgba(74,222,128,0.2); }
+        .btn-reactivate:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-delete { background: rgba(100,100,120,0.12); color: var(--muted); border: 1px solid rgba(100,100,120,0.25); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
+        .btn-delete:hover { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.3); }
+        .worker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
       `}</style>
 
       {/* CONFIRM REMOVE MODAL */}
       {confirmRemove && (
         <div className="confirm-overlay" onClick={() => setConfirmRemove(null)}>
-          <div className="confirm-box" onClick={e => e.stopPropagation()}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-icon">⚠️</div>
             <div className="confirm-title">Remove Worker?</div>
             <div className="confirm-sub">
-              Are you sure you want to remove <strong>{confirmRemove.name}</strong>? They will no longer be able to claim salary. This action cannot be undone.
+              Are you sure you want to remove{" "}
+              <strong>{confirmRemove.name}</strong>? They will no longer be able
+              to claim salary. You can reactivate them later.
             </div>
             <div className="confirm-btns">
-              <button className="confirm-cancel" onClick={() => setConfirmRemove(null)}>Cancel</button>
-              <button className="confirm-danger" onClick={removeWorker} disabled={loading}>
+              <button
+                className="confirm-cancel"
+                onClick={() => setConfirmRemove(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="confirm-danger"
+                onClick={removeWorker}
+                disabled={loading}
+              >
                 {loading ? "Removing..." : "Yes, Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE MODAL */}
+      {confirmDelete && (
+        <div className="confirm-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon">🗑️</div>
+            <div className="confirm-title">Delete from Dashboard?</div>
+            <div className="confirm-sub">
+              This will permanently remove <strong>{confirmDelete.name}</strong>{" "}
+              from your dashboard view. Their onchain record remains intact.
+            </div>
+            <div className="confirm-btns">
+              <button
+                className="confirm-cancel"
+                onClick={() => setConfirmDelete(null)}
+              >
+                Cancel
+              </button>
+              <button className="confirm-danger" onClick={deleteWorker}>
+                Yes, Delete
               </button>
             </div>
           </div>
@@ -173,26 +359,49 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
 
       {/* BALANCE CARD */}
       {skeletonLoad ? (
-        <div className="balance-card" style={{gap:"40px"}}>
-          <div style={{display:"flex", flexDirection:"column", gap:"10px"}}><Skeleton w="100px" h="12px" /><Skeleton w="160px" h="36px" /></div>
-          <div style={{display:"flex", flexDirection:"column", gap:"10px"}}><Skeleton w="100px" h="12px" /><Skeleton w="140px" h="36px" /></div>
-          <div style={{display:"flex", flexDirection:"column", gap:"10px"}}><Skeleton w="100px" h="12px" /><Skeleton w="60px" h="36px" /></div>
+        <div className="balance-card" style={{ gap: "40px" }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
+          >
+            <Skeleton w="100px" h="12px" />
+            <Skeleton w="160px" h="36px" />
+          </div>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
+          >
+            <Skeleton w="100px" h="12px" />
+            <Skeleton w="140px" h="36px" />
+          </div>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
+          >
+            <Skeleton w="100px" h="12px" />
+            <Skeleton w="60px" h="36px" />
+          </div>
         </div>
       ) : (
         <div className="balance-card">
           <div className="bal-item">
             <div className="bal-label">Payroll Vault</div>
-            <div className="bal-num">{parseFloat(balance).toFixed(2)}<span className="bal-unit">USDC</span></div>
+            <div className="bal-num">
+              {parseFloat(balance).toFixed(2)}
+              <span className="bal-unit">USDC</span>
+            </div>
           </div>
           <div className="bal-divider" />
           <div className="bal-item">
             <div className="bal-label">Wallet Balance</div>
-            <div className="bal-num">{parseFloat(usdcBalance).toFixed(2)}<span className="bal-unit">USDC</span></div>
+            <div className="bal-num">
+              {parseFloat(usdcBalance).toFixed(2)}
+              <span className="bal-unit">USDC</span>
+            </div>
           </div>
           <div className="bal-divider" />
           <div className="bal-item">
             <div className="bal-label">Active Workers</div>
-            <div className="bal-num">{workers.filter(w => w.active).length}</div>
+            <div className="bal-num">
+              {workers.filter((w) => w.active).length}
+            </div>
           </div>
         </div>
       )}
@@ -202,16 +411,50 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
         <div className="card">
           <div className="card-title">💰 Deposit USDC</div>
           <div className="card-sub">Fund your payroll vault</div>
-          <input className={`inp ${errors.depositAmt ? "inp-error" : ""}`} placeholder="Amount (USDC)" type="number" value={depositAmt} onChange={e => { setDepositAmt(e.target.value); setErrors(p => ({...p, depositAmt: ""})); }} />
-          {errors.depositAmt && <div className="err-msg">⚠ {errors.depositAmt}</div>}
-          <button className="btn-gold" onClick={depositFunds} disabled={loading}>Deposit</button>
+          <input
+            className={`inp ${errors.depositAmt ? "inp-error" : ""}`}
+            placeholder="Amount (USDC)"
+            type="number"
+            value={depositAmt}
+            onChange={(e) => {
+              setDepositAmt(e.target.value);
+              setErrors((p) => ({ ...p, depositAmt: "" }));
+            }}
+          />
+          {errors.depositAmt && (
+            <div className="err-msg">⚠ {errors.depositAmt}</div>
+          )}
+          <button
+            className="btn-gold"
+            onClick={depositFunds}
+            disabled={loading}
+          >
+            Deposit
+          </button>
         </div>
         <div className="card">
           <div className="card-title">🏦 Withdraw USDC</div>
           <div className="card-sub">Withdraw from vault</div>
-          <input className={`inp ${errors.withdrawAmt ? "inp-error" : ""}`} placeholder="Amount (USDC)" type="number" value={withdrawAmt} onChange={e => { setWithdrawAmt(e.target.value); setErrors(p => ({...p, withdrawAmt: ""})); }} />
-          {errors.withdrawAmt && <div className="err-msg">⚠ {errors.withdrawAmt}</div>}
-          <button className="btn-danger" onClick={withdrawFunds} disabled={loading}>Withdraw</button>
+          <input
+            className={`inp ${errors.withdrawAmt ? "inp-error" : ""}`}
+            placeholder="Amount (USDC)"
+            type="number"
+            value={withdrawAmt}
+            onChange={(e) => {
+              setWithdrawAmt(e.target.value);
+              setErrors((p) => ({ ...p, withdrawAmt: "" }));
+            }}
+          />
+          {errors.withdrawAmt && (
+            <div className="err-msg">⚠ {errors.withdrawAmt}</div>
+          )}
+          <button
+            className="btn-danger"
+            onClick={withdrawFunds}
+            disabled={loading}
+          >
+            Withdraw
+          </button>
         </div>
       </div>
 
@@ -219,50 +462,139 @@ function EmployerDashboard({ flowArc, usdc, address, isEmployer, setIsEmployer, 
       <div className="card">
         <div className="card-title">➕ Add Worker</div>
         <div className="card-sub">Register a new worker to your payroll</div>
-        <input className={`inp ${errors.workerAddr ? "inp-error" : ""}`} placeholder="Wallet Address (0x...)" value={workerAddr} onChange={e => { setWorkerAddr(e.target.value); setErrors(p => ({...p, workerAddr: ""})); }} />
-        {errors.workerAddr && <div className="err-msg">⚠ {errors.workerAddr}</div>}
-        <input className={`inp ${errors.workerName ? "inp-error" : ""}`} placeholder="Worker Name" value={workerName} onChange={e => { setWorkerName(e.target.value); setErrors(p => ({...p, workerName: ""})); }} />
-        {errors.workerName && <div className="err-msg">⚠ {errors.workerName}</div>}
-        <input className={`inp ${errors.workerSalary ? "inp-error" : ""}`} placeholder="Monthly Salary (USDC)" type="number" value={workerSalary} onChange={e => { setWorkerSalary(e.target.value); setErrors(p => ({...p, workerSalary: ""})); }} />
-        {errors.workerSalary && <div className="err-msg">⚠ {errors.workerSalary}</div>}
-        <button className="btn-gold" onClick={addWorker} disabled={loading}>{loading ? "Adding..." : "Add Worker →"}</button>
+        <input
+          className={`inp ${errors.workerAddr ? "inp-error" : ""}`}
+          placeholder="Wallet Address (0x...)"
+          value={workerAddr}
+          onChange={(e) => {
+            setWorkerAddr(e.target.value);
+            setErrors((p) => ({ ...p, workerAddr: "" }));
+          }}
+        />
+        {errors.workerAddr && (
+          <div className="err-msg">⚠ {errors.workerAddr}</div>
+        )}
+        <input
+          className={`inp ${errors.workerName ? "inp-error" : ""}`}
+          placeholder="Worker Name"
+          value={workerName}
+          onChange={(e) => {
+            setWorkerName(e.target.value);
+            setErrors((p) => ({ ...p, workerName: "" }));
+          }}
+        />
+        {errors.workerName && (
+          <div className="err-msg">⚠ {errors.workerName}</div>
+        )}
+        <input
+          className={`inp ${errors.workerSalary ? "inp-error" : ""}`}
+          placeholder="Monthly Salary (USDC)"
+          type="number"
+          value={workerSalary}
+          onChange={(e) => {
+            setWorkerSalary(e.target.value);
+            setErrors((p) => ({ ...p, workerSalary: "" }));
+          }}
+        />
+        {errors.workerSalary && (
+          <div className="err-msg">⚠ {errors.workerSalary}</div>
+        )}
+        <button className="btn-gold" onClick={addWorker} disabled={loading}>
+          {loading ? "Adding..." : "Add Worker →"}
+        </button>
       </div>
 
       {/* WORKERS LIST */}
       <div className="card">
         <div className="card-title">👷 Workers</div>
         {skeletonLoad ? (
-          <div style={{display:"flex", flexDirection:"column", gap:"10px"}}>
-            {[1,2].map(i => <div key={i} style={{height:"80px", borderRadius:"14px", background:"linear-gradient(90deg, #131325 25%, #1a1a35 50%, #131325 75%)", backgroundSize:"200% 100%", animation:"shimmer 1.5s infinite"}} />)}
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
+          >
+            {[1, 2].map((i) => (
+              <div
+                key={i}
+                style={{
+                  height: "80px",
+                  borderRadius: "14px",
+                  background:
+                    "linear-gradient(90deg, #131325 25%, #1a1a35 50%, #131325 75%)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.5s infinite",
+                }}
+              />
+            ))}
           </div>
-        ) : workers.length === 0 ? (
+        ) : visibleWorkers.length === 0 ? (
           <div className="empty">
-            <div style={{fontSize:"32px", marginBottom:"10px"}}>👷</div>
+            <div style={{ fontSize: "32px", marginBottom: "10px" }}>👷</div>
             No workers added yet
           </div>
-        ) : workers.map(w => (
-          <div key={w.address} className="worker-row">
-            <div>
-              <div className="w-name">
-                {w.name}
-                {!w.active && <span className="badge-inactive">Inactive</span>}
+        ) : (
+          visibleWorkers.map((w) => (
+            <div key={w.address} className="worker-row">
+              <div>
+                <div className="w-name">
+                  {w.name}
+                  {!w.active && (
+                    <span className="badge-inactive">Inactive</span>
+                  )}
+                </div>
+                <div className="w-addr">
+                  {w.address.slice(0, 10)}...{w.address.slice(-6)}
+                  <button
+                    className="copy-btn"
+                    onClick={() => {
+                      navigator.clipboard.writeText(w.address);
+                      notify("Address copied!");
+                    }}
+                    title="Copy address"
+                  >
+                    📋
+                  </button>
+                </div>
+                <div className="w-salary">
+                  Monthly: {parseFloat(w.monthlySalary).toFixed(2)} USDC
+                </div>
               </div>
-              <div className="w-addr">
-                {w.address.slice(0,10)}...{w.address.slice(-6)}
-                <button className="copy-btn" onClick={() => { navigator.clipboard.writeText(w.address); notify("Address copied!"); }} title="Copy address">📋</button>
+              <div style={{ textAlign: "right" }}>
+                <div className="w-earned">
+                  Earned: {parseFloat(w.earned).toFixed(4)} USDC
+                </div>
+                <div className="worker-actions">
+                  {w.active ? (
+                    <button
+                      className="btn-remove"
+                      onClick={() => setConfirmRemove(w)}
+                      disabled={loading}
+                    >
+                      Remove
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="btn-reactivate"
+                        onClick={() => reactivateWorker(w)}
+                        disabled={loading && reactivating === w.address}
+                      >
+                        {loading && reactivating === w.address
+                          ? "Reactivating..."
+                          : "⚡ Reactivate"}
+                      </button>
+                      <button
+                        className="btn-delete"
+                        onClick={() => setConfirmDelete(w)}
+                        disabled={loading}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="w-salary">Monthly: {parseFloat(w.monthlySalary).toFixed(2)} USDC</div>
             </div>
-            <div style={{textAlign:"right"}}>
-              <div className="w-earned">Earned: {parseFloat(w.earned).toFixed(4)} USDC</div>
-              {w.active && (
-                <button className="btn-remove" onClick={() => setConfirmRemove(w)} disabled={loading}>
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );
