@@ -1,20 +1,21 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 
 function WorkerDashboard({ flowArc, address, notify }) {
   const [employerAddr, setEmployerAddr] = useState("");
-  const [streams, setStreams] = useState([]); // all employer streams
+  const [streams, setStreams] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [claiming, setClaiming] = useState(null); // employer address being claimed
+  const [claiming, setClaiming] = useState(null);
   const [autoLoading, setAutoLoading] = useState(true);
   const [manualResult, setManualResult] = useState(null);
   const [manualErr, setManualErr] = useState("");
+  const streamsRef = useRef([]);
 
-  // Load all salary streams for this worker by scanning WorkerAdded events
+  // Load all active salary streams for connected wallet
   const loadAllStreams = useCallback(async () => {
     if (!flowArc || !address) return;
     try {
-      // Filter WorkerAdded events where worker == connected address
+      // Scan WorkerAdded events where worker == connected wallet
       const filter = flowArc.filters.WorkerAdded(null, address);
       const events = await flowArc.queryFilter(filter);
 
@@ -23,6 +24,7 @@ function WorkerDashboard({ flowArc, address, notify }) {
 
       if (employerSet.length === 0) {
         setStreams([]);
+        streamsRef.current = [];
         setAutoLoading(false);
         return;
       }
@@ -33,6 +35,10 @@ function WorkerDashboard({ flowArc, address, notify }) {
             const d = await flowArc.getWorkerDetails(emp, address);
             const empData = await flowArc.employers(emp);
             const earned = await flowArc.getEarnedAmount(emp, address);
+
+            // Skip workers with no name or zero salary — invalid entries
+            if (!d.name || d.salaryPerSecond.eq(0)) return null;
+
             return {
               employerAddress: emp,
               companyName: empData.companyName || "Unknown Company",
@@ -57,35 +63,52 @@ function WorkerDashboard({ flowArc, address, notify }) {
         }),
       );
 
-      setStreams(data.filter(Boolean));
+      // Filter out nulls and inactive workers with zero salary
+      const valid = data.filter(Boolean);
+      setStreams(valid);
+      streamsRef.current = valid;
     } catch (e) {
       console.error(e);
     }
     setAutoLoading(false);
   }, [flowArc, address]);
 
-  // Refresh earned amounts every 5 seconds
+  // Refresh earned amounts every 5 seconds without full reload
   const refreshEarned = useCallback(async () => {
-    if (!flowArc || !address || streams.length === 0) return;
+    if (!flowArc || !address || streamsRef.current.length === 0) return;
     try {
       const updated = await Promise.all(
-        streams.map(async (s) => {
+        streamsRef.current.map(async (s) => {
           try {
             const earned = await flowArc.getEarnedAmount(
               s.employerAddress,
               address,
             );
-            return { ...s, earned: ethers.utils.formatUnits(earned, 6) };
+            const d = await flowArc.getWorkerDetails(
+              s.employerAddress,
+              address,
+            );
+            return {
+              ...s,
+              active: d.active,
+              earned: ethers.utils.formatUnits(earned, 6),
+              lastClaimed: new Date(
+                d.lastClaimed.toNumber() * 1000,
+              ).toLocaleString(),
+            };
           } catch {
             return s;
           }
         }),
       );
-      setStreams(updated);
+      // Remove permanently inactive workers with zero salary
+      const valid = updated.filter((s) => s.active || parseFloat(s.earned) > 0);
+      setStreams(valid);
+      streamsRef.current = valid;
     } catch (e) {
       console.error(e);
     }
-  }, [flowArc, address, streams]);
+  }, [flowArc, address]);
 
   useEffect(() => {
     loadAllStreams();
@@ -110,7 +133,7 @@ function WorkerDashboard({ flowArc, address, notify }) {
       const empData = await flowArc.employers(employerAddr);
       const earned = await flowArc.getEarnedAmount(employerAddr, address);
 
-      if (!d.name) {
+      if (!d.name || d.salaryPerSecond.eq(0)) {
         setManualErr("You are not registered under this employer.");
         setLoading(false);
         return;
@@ -142,7 +165,7 @@ function WorkerDashboard({ flowArc, address, notify }) {
       const tx = await flowArc.claimSalary(employerAddress);
       await tx.wait();
       notify(`Salary claimed from ${companyName}! 🎉`);
-      loadAllStreams();
+      await loadAllStreams();
       setManualResult(null);
     } catch (e) {
       notify(e.reason || e.message, "error");
@@ -150,7 +173,6 @@ function WorkerDashboard({ flowArc, address, notify }) {
     setClaiming(null);
   };
 
-  // Total earned across all streams
   const totalEarned = streams.reduce(
     (sum, s) => sum + parseFloat(s.earned || 0),
     0,
@@ -165,10 +187,9 @@ function WorkerDashboard({ flowArc, address, notify }) {
         borderRadius: "20px",
         padding: "24px",
         marginBottom: "16px",
-        transition: "border-color 0.2s",
       }}
     >
-      {/* Company Header */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -229,6 +250,7 @@ function WorkerDashboard({ flowArc, address, notify }) {
               : "rgba(248,113,113,0.1)",
             color: stream.active ? "var(--success)" : "var(--danger)",
             border: `1px solid ${stream.active ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.25)"}`,
+            flexShrink: 0,
           }}
         >
           <div
@@ -422,11 +444,9 @@ function WorkerDashboard({ flowArc, address, notify }) {
 
   return (
     <div>
-      <style>{`
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
-      `}</style>
+      <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
 
-      {/* TOTAL SUMMARY — only show if streams exist */}
+      {/* TOTAL SUMMARY */}
       {streams.length > 0 && (
         <div className="balance-card" style={{ marginBottom: "22px" }}>
           <div className="bal-item">
@@ -469,7 +489,6 @@ function WorkerDashboard({ flowArc, address, notify }) {
               fontSize: "16px",
               fontWeight: 700,
               marginBottom: "16px",
-              color: "var(--text)",
             }}
           >
             💼 Your Salary Streams ({streams.length})
@@ -488,10 +507,10 @@ function WorkerDashboard({ flowArc, address, notify }) {
               marginBottom: "6px",
             }}
           >
-            No salary streams found
+            No active salary streams found
           </p>
           <p style={{ color: "var(--muted)", fontSize: "13px" }}>
-            Use the lookup below if your employer recently added you
+            Use the lookup below if you were recently added by an employer
           </p>
         </div>
       )}
@@ -500,9 +519,8 @@ function WorkerDashboard({ flowArc, address, notify }) {
       <div className="card" style={{ marginTop: "24px" }}>
         <div className="card-title">🔍 Manual Employer Lookup</div>
         <div className="card-sub">
-          Each employer has a unique wallet address — entering it here lets you
-          check your salary stream from that specific employer. Useful if you
-          were recently added and your stream hasn't loaded yet.
+          Enter your employer's connected wallet address to look up your salary
+          stream directly.
         </div>
         <input
           className="inp"
@@ -534,8 +552,6 @@ function WorkerDashboard({ flowArc, address, notify }) {
         >
           {loading ? "Looking up..." : "Check Employment →"}
         </button>
-
-        {/* Manual Result */}
         {manualResult && (
           <div style={{ marginTop: "20px" }}>
             <StreamCard stream={manualResult} />
